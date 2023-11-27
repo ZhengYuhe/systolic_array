@@ -189,9 +189,7 @@ void krnl_mmult(const int* a, // Read-Only Matrix A
     int bufB[MAX_SIZE][MAX_SIZE];
     #pragma HLS ARRAY_PARTITION variable = bufB dim = 0 complete    
 
-    //int bufC[MAX_SIZE * MAX_SIZE + 1];
-    //#pragma HLS ARRAY_PARTITION variable = bufC dim = 0 complete
-
+    
     readA:
     for(int i = 0; i < MAX_SIZE; i++){
         for (int j = 0; j < MAX_SIZE; j ++){
