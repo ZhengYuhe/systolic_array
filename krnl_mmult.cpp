@@ -173,15 +173,11 @@ void krnl_mmult(const int* a, // Read-Only Matrix A
     int c_col = b_col;
 
     // Local memory to store input and output matrices
-    // int burstA[MAX_SIZE][MAX_SIZE];
-    // #pragma HLS ARRAY_PARTITION variable = burstA dim = 2 complete
-
-    static hls::stream<int> c_stream("localC_stream");
-
-    int localA[MAX_SIZE][SHIFT_BUFFER_LEN];
+    int localA[MAX_SIZE][MAX_SIZE];
     #pragma HLS ARRAY_PARTITION variable = localA dim = 1 complete
+    #pragma HLS ARRAY_PARTITION variable=localA dim =2 factor=2 type=cyclic
     
-    int localB[SHIFT_BUFFER_LEN][MAX_SIZE];
+    int localB[MAX_SIZE][MAX_SIZE];
     #pragma HLS ARRAY_PARTITION variable = localB dim = 2 complete
 
     int localC[MAX_SIZE][MAX_SIZE];
@@ -193,72 +189,75 @@ void krnl_mmult(const int* a, // Read-Only Matrix A
     int bufB[MAX_SIZE][MAX_SIZE];
     #pragma HLS ARRAY_PARTITION variable = bufB dim = 0 complete    
 
-    int bufC[MAX_SIZE * MAX_SIZE + 1];
-    #pragma HLS ARRAY_PARTITION variable = bufC dim = 0 complete
+    //int bufC[MAX_SIZE * MAX_SIZE + 1];
+    //#pragma HLS ARRAY_PARTITION variable = bufC dim = 0 complete
 
-    // Burst reads on input matrices from global memory
-    // Read Input A
-    // Auto-pipeline is going to apply pipeline to these loops
-    
-    // BurstA:
-    // for (int i = 0; i < MAX_SIZE; i ++ ){
-    //     BurstA_inner:
+    readA:
+    for(int i = 0; i < MAX_SIZE; i++){
+        for (int j = 0; j < MAX_SIZE; j ++){
+            localA[i][j] = a[i * MAX_SIZE + j];
+        }
+    }
+
+    // int local_A_j;
+    // readA:
+    // for (int i = 0; i < MAX_SIZE; i++) {
+    //     readA_inner:
     //     for (int j = 0; j < MAX_SIZE; j ++){
-    //         burstA[i][j] = a[i*MAX_SIZE + j];
-    //     }
+    //         //shift A to fit systolic array access pattern
+    //         local_A_j = SHIFT_BUFFER_LEN - MAX_SIZE - i + j;
+    //         localA[i][local_A_j] = a[i * MAX_SIZE + j];
+    //     }    
     // }
 
-    int local_A_j;
-    readA:
-    for (int i = 0; i < MAX_SIZE; i++) {
-        readA_inner:
-        for (int j = 0; j < MAX_SIZE; j ++){
-            //shift A to fit systolic array access pattern
-            local_A_j = SHIFT_BUFFER_LEN - MAX_SIZE - i + j;
-            localA[i][local_A_j] = a[i * MAX_SIZE + j];
-        }    
-    }
 
+    // fillA:
+    // for (int i = 0; i < MAX_SIZE; i ++) {
+    //     #pragma HLS UNROLL
+    //     fillA_inner:
+    //     for (int j = 0; j < SHIFT_BUFFER_LEN; j++){
+    //         #pragma HLS UNROLL
+    //         //fill the rest with 0
+    //         if ((j < SHIFT_BUFFER_LEN - MAX_SIZE - i) || (j >= SHIFT_BUFFER_LEN - i)){
+    //             localA[i][j] = 0;
+    //         }
+    //     }    
+    // }
 
-    fillA:
-    for (int i = 0; i < MAX_SIZE; i ++) {
-        #pragma HLS UNROLL
-        fillA_inner:
-        for (int j = 0; j < SHIFT_BUFFER_LEN; j++){
-            #pragma HLS UNROLL
-            //fill the rest with 0
-            if ((j < SHIFT_BUFFER_LEN - MAX_SIZE - i) || (j >= SHIFT_BUFFER_LEN - i)){
-                localA[i][j] = 0;
-            }
-        }    
-    }
-
-    // Read Input B
     
-    int local_B_i;
-    readB:
-    for (int i = 0; i < MAX_SIZE; i ++) {
-        readB_inner:
-        for (int j = 0; j < MAX_SIZE; j++){
-            //shift B to fit systolic array access pattern
-            local_B_i = SHIFT_BUFFER_LEN - MAX_SIZE - j + i;
-            localB[local_B_i][j] = b[i * MAX_SIZE + j];
-        }    
+    // Read Input B
+    readB: 
+    for(int i = 0; i < MAX_SIZE; i++){
+        for (int j = 0; j < MAX_SIZE; j ++){
+            localB[i][j] = b[i * MAX_SIZE + j];
+        }
     }
 
 
-    fillB:
-    for (int j = 0; j < MAX_SIZE; j ++) {
-        #pragma HLS UNROLL
-        fillB_inner:
-        for (int i = 0; i < SHIFT_BUFFER_LEN; i++){
-            #pragma HLS UNROLL
-            //fill the rest with 0
-            if ((i < SHIFT_BUFFER_LEN - MAX_SIZE - j) || (i >= SHIFT_BUFFER_LEN - j)){
-                localB[i][j] = 0;
-            }
-        }    
-    }
+    // int local_B_i;
+    // readB:
+    // for (int i = 0; i < MAX_SIZE; i ++) {
+    //     readB_inner:
+    //     for (int j = 0; j < MAX_SIZE; j++){
+    //         //shift B to fit systolic array access pattern
+    //         local_B_i = SHIFT_BUFFER_LEN - MAX_SIZE - j + i;
+    //         localB[local_B_i][j] = b[i * MAX_SIZE + j];
+    //     }    
+    // }
+
+
+    // fillB:
+    // for (int j = 0; j < MAX_SIZE; j ++) {
+    //     #pragma HLS UNROLL
+    //     fillB_inner:
+    //     for (int i = 0; i < SHIFT_BUFFER_LEN; i++){
+    //         #pragma HLS UNROLL
+    //         //fill the rest with 0
+    //         if ((i < SHIFT_BUFFER_LEN - MAX_SIZE - j) || (i >= SHIFT_BUFFER_LEN - j)){
+    //             localB[i][j] = 0;
+    //         }
+    //     }    
+    // }
 
 
     fillC:
@@ -276,17 +275,20 @@ void krnl_mmult(const int* a, // Read-Only Matrix A
 
     
     systolic1:
-    for (int k = 3 * MAX_SIZE - 2; k >= 0; k--) {
+    for (int k = 0; k < (3*MAX_SIZE -1); k ++) {
     #pragma HLS pipeline
         systolic2:
         for (int i = MAX_SIZE-1; i >= 0; i--) {
             systolic3:
             for (int j = MAX_SIZE-1; j >= 0; j--) {
-                int inputA = (k >= MAX_SIZE) ? localA[i][k - MAX_SIZE] : 0;
-                int inputB = (k >= MAX_SIZE) ? localB[k - MAX_SIZE][j] : 0;
-                bufA[i][j] = (j > 0) ? bufA[i][j-1] : inputA;
-                bufB[i][j] = (i > 0) ? bufB[i-1][j] : inputB;
-                localC[i][j] += bufA[i][j] * bufB[i][j];
+                if((i+j<=k)&&(k<i+j+MAX_SIZE)){
+                    bufA[i][j] = (j > 0) ? bufA[i][j-1] : localA[i][k - i];
+                    bufB[i][j] = (i > 0) ? bufB[i-1][j] : localB[k - j][j];
+                    localC[i][j] += bufA[i][j] * bufB[i][j];
+                }
+                //int inputA = (k >= MAX_SIZE) ? localA[i][k - MAX_SIZE] : 0;
+                //int inputB = (k >= MAX_SIZE) ? localB[k - MAX_SIZE][j] : 0;
+                
                 
                 // if ((k+i+j == MAX_SIZE + 2)){
                 //     c_stream << localC[i][j];
@@ -301,7 +303,7 @@ void krnl_mmult(const int* a, // Read-Only Matrix A
 
     // Burst write from output matrices to global memory
     // Burst write from matrix C
-    // writeC:
+    writeC:
     for (int i = 0; i < MAX_SIZE; i ++ ){
         writeC_inner:
         for (int j = 0; j < MAX_SIZE; j ++){
