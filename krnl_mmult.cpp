@@ -288,10 +288,7 @@ void krnl_mmult(const int* a, // Read-Only Matrix A
                 //int inputB = (k >= MAX_SIZE) ? localB[k - MAX_SIZE][j] : 0;
                 
                 
-                // if ((k+i+j == MAX_SIZE + 2)){
-                //     c_stream << localC[i][j];
-                //     c[i * MAX_SIZE + j] = c_stream.read();
-                // }
+               
             }
         }
     }
