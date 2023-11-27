@@ -127,7 +127,7 @@ Vitis Key Concept :
 Kernel Description :
 
     This kernel is a systolic array based matrix multiplication. Though the
-    maximum size of the input matrices are restricted to a smaller MAX_SIZE, it
+    maximum size of the input matrices are restricted to a smaller TILE_SIZE, it
     is still possible to use this approach and get better performance for larger
     matrices by using tiling.
 
@@ -149,15 +149,16 @@ Kernel Description :
 */
 
 #include <stdio.h>
-#include <hls_stream.h>
+
 
 // Maximum Array Size
-#define MAX_SIZE 8
-#define SHIFT_BUFFER_LEN (MAX_SIZE * 2 -1)
-#define DOT_PROD_SIZE 1
+#define TILE_SIZE 8
+#define DATA_SIZE 1024
+//#define SHIFT_BUFFER_LEN (TILE_SIZE * 2 -1)
+
 
 // TRIPCOUNT identifier
-const unsigned int c_size = MAX_SIZE;
+const unsigned int c_size = TILE_SIZE;
 
 extern "C" {
 void krnl_mmult(const int* a, // Read-Only Matrix A
@@ -172,139 +173,107 @@ void krnl_mmult(const int* a, // Read-Only Matrix A
     int c_row = a_row;
     int c_col = b_col;
 
+    
     // Local memory to store input and output matrices
-    int localA[MAX_SIZE][MAX_SIZE];
+    int localA[TILE_SIZE][TILE_SIZE];
     #pragma HLS ARRAY_PARTITION variable = localA dim = 1 complete
     #pragma HLS ARRAY_PARTITION variable=localA dim =2 factor=2 type=cyclic
     
-    int localB[MAX_SIZE][MAX_SIZE];
+    int localB[TILE_SIZE][TILE_SIZE];
     #pragma HLS ARRAY_PARTITION variable = localB dim = 2 complete
 
-    int localC[MAX_SIZE][MAX_SIZE];
+    int localC[TILE_SIZE][TILE_SIZE];
     #pragma HLS ARRAY_PARTITION variable = localC dim = 0 complete
 
-    int bufA[MAX_SIZE][MAX_SIZE];
+    int bufA[TILE_SIZE][TILE_SIZE];
     #pragma HLS ARRAY_PARTITION variable = bufA dim = 0 complete
 
-    int bufB[MAX_SIZE][MAX_SIZE];
+    int bufB[TILE_SIZE][TILE_SIZE];
     #pragma HLS ARRAY_PARTITION variable = bufB dim = 0 complete    
 
-    
-    readA:
-    for(int i = 0; i < MAX_SIZE; i++){
-        for (int j = 0; j < MAX_SIZE; j ++){
-            localA[i][j] = a[i * MAX_SIZE + j];
-        }
-    }
-
-    // int local_A_j;
-    // readA:
-    // for (int i = 0; i < MAX_SIZE; i++) {
-    //     readA_inner:
-    //     for (int j = 0; j < MAX_SIZE; j ++){
-    //         //shift A to fit systolic array access pattern
-    //         local_A_j = SHIFT_BUFFER_LEN - MAX_SIZE - i + j;
-    //         localA[i][local_A_j] = a[i * MAX_SIZE + j];
-    //     }    
-    // }
-
-
-    // fillA:
-    // for (int i = 0; i < MAX_SIZE; i ++) {
-    //     #pragma HLS UNROLL
-    //     fillA_inner:
-    //     for (int j = 0; j < SHIFT_BUFFER_LEN; j++){
-    //         #pragma HLS UNROLL
-    //         //fill the rest with 0
-    //         if ((j < SHIFT_BUFFER_LEN - MAX_SIZE - i) || (j >= SHIFT_BUFFER_LEN - i)){
-    //             localA[i][j] = 0;
-    //         }
-    //     }    
-    // }
-
-    
-    // Read Input B
-    readB: 
-    for(int i = 0; i < MAX_SIZE; i++){
-        for (int j = 0; j < MAX_SIZE; j ++){
-            localB[i][j] = b[i * MAX_SIZE + j];
-        }
-    }
-
-
-    // int local_B_i;
-    // readB:
-    // for (int i = 0; i < MAX_SIZE; i ++) {
-    //     readB_inner:
-    //     for (int j = 0; j < MAX_SIZE; j++){
-    //         //shift B to fit systolic array access pattern
-    //         local_B_i = SHIFT_BUFFER_LEN - MAX_SIZE - j + i;
-    //         localB[local_B_i][j] = b[i * MAX_SIZE + j];
-    //     }    
-    // }
-
-
-    // fillB:
-    // for (int j = 0; j < MAX_SIZE; j ++) {
-    //     #pragma HLS UNROLL
-    //     fillB_inner:
-    //     for (int i = 0; i < SHIFT_BUFFER_LEN; i++){
-    //         #pragma HLS UNROLL
-    //         //fill the rest with 0
-    //         if ((i < SHIFT_BUFFER_LEN - MAX_SIZE - j) || (i >= SHIFT_BUFFER_LEN - j)){
-    //             localB[i][j] = 0;
-    //         }
-    //     }    
-    // }
-
-
-    fillC:
-    for (int i = 0; i < MAX_SIZE; i++){
-        #pragma HLS UNROLL
-        fillC_inner:
-        for (int j = 0; j < MAX_SIZE; j ++){
-            #pragma HLS UNROLL
-            bufA[i][j] = 0;
-            bufB[i][j] = 0;
-            localC[i][j] = 0;
-        }
-    }
-
-
-    
-    systolic1:
-    for (int k = 0; k < (3*MAX_SIZE -1); k ++) {
-    #pragma HLS pipeline
-        systolic2:
-        for (int i = MAX_SIZE-1; i >= 0; i--) {
-            systolic3:
-            for (int j = MAX_SIZE-1; j >= 0; j--) {
-                if((i+j<=k)&&(k<i+j+MAX_SIZE)){
-                    bufA[i][j] = (j > 0) ? bufA[i][j-1] : localA[i][k - i];
-                    bufB[i][j] = (i > 0) ? bufB[i-1][j] : localB[k - j][j];
-                    localC[i][j] += bufA[i][j] * bufB[i][j];
+    outer_i:
+    for(int i0=0; i0<DATA_SIZE; i0+=TILE_SIZE){
+        outer_j:
+        for(int j0=0; j0<DATA_SIZE; j0+=TILE_SIZE){
+            readC:
+            for(int i = i0; i < i0+TILE_SIZE; i++){
+                for (int j = j0; j < j0+TILE_SIZE; j ++){
+                    localC[i-i0][j-j0] = c[i * DATA_SIZE + j];
                 }
-                //int inputA = (k >= MAX_SIZE) ? localA[i][k - MAX_SIZE] : 0;
-                //int inputB = (k >= MAX_SIZE) ? localB[k - MAX_SIZE][j] : 0;
+            }
+
+            outer_k:
+            for(int k0=0; k0<DATA_SIZE; k0+=TILE_SIZE){
+
+                readA:
+                for(int i = i0; i < i0+TILE_SIZE; i++){
+                    for (int k = k0; k < k0+TILE_SIZE; k++){
+                        localA[i-i0][k-k0] = a[i * DATA_SIZE + k];
+                    }
+                }
+
+                
+                // Read Input B
+                readB: 
+                for(int k = k0; k < k0+TILE_SIZE; k++){
+                    for (int j = j0; j < j0+TILE_SIZE; j ++){
+                        localB[k-k0][j-j0] = b[k * DATA_SIZE + j];
+                    }
+                }
+
+                
+
+                fill_bufAB:
+                for (int i = 0; i < TILE_SIZE; i++){
+                    #pragma HLS UNROLL
+                    fillC_inner:
+                    for (int j = 0; j < TILE_SIZE; j ++){
+                        #pragma HLS UNROLL
+                        bufA[i][j] = 0;
+                        bufB[i][j] = 0;
+                    }
+                }
+
+
+                
+                systolic1:
+                for (int k = 0; k < (3*TILE_SIZE -1); k ++) {
+                #pragma HLS pipeline
+                    systolic2:
+                    for (int i = TILE_SIZE-1; i >= 0; i--) {
+                        systolic3:
+                        for (int j = TILE_SIZE-1; j >= 0; j--) {
+                            if((i+j<=k)&&(k<i+j+TILE_SIZE)){
+                                bufA[i][j] = (j > 0) ? bufA[i][j-1] : localA[i][k - i];
+                                bufB[i][j] = (i > 0) ? bufB[i-1][j] : localB[k - j][j];
+                                localC[i][j] += bufA[i][j] * bufB[i][j];
+                            }
+                        }
+                    }
+                }
                 
                 
-               
+
+
+                // Burst write from output matrices to global memory
+                // Burst write from matrix C
+                
+
+
+            }
+            writeC:
+            for (int i = i0; i < i0+TILE_SIZE; i ++ ){
+                writeC_inner:
+                for (int j = j0; j < j0+TILE_SIZE; j ++){
+                    c[i * DATA_SIZE + j] = localC[i - i0][j-j0];
+                }
             }
         }
     }
-    
-    
 
 
-    // Burst write from output matrices to global memory
-    // Burst write from matrix C
-    writeC:
-    for (int i = 0; i < MAX_SIZE; i ++ ){
-        writeC_inner:
-        for (int j = 0; j < MAX_SIZE; j ++){
-            c[i * MAX_SIZE + j] = localC[i][j];
-        }
-    }
+
+    
 
 
 /*
@@ -313,13 +282,13 @@ void krnl_mmult(const int* a, // Read-Only Matrix A
     int c_col = b_col;
 
     // Local memory to store input and output matrices
-    int localA[MAX_SIZE][MAX_SIZE];
+    int localA[TILE_SIZE][TILE_SIZE];
     #pragma HLS ARRAY_PARTITION variable = localA dim = 1 complete
 
-    int localB[MAX_SIZE][MAX_SIZE];
+    int localB[TILE_SIZE][TILE_SIZE];
     #pragma HLS ARRAY_PARTITION variable = localB dim = 2 complete
 
-    int localC[MAX_SIZE][MAX_SIZE];
+    int localC[TILE_SIZE][TILE_SIZE];
     #pragma HLS ARRAY_PARTITION variable = localC dim = 0 complete
 
     // Burst reads on input matrices from global memory
@@ -350,14 +319,14 @@ void krnl_mmult(const int* a, // Read-Only Matrix A
 // local matrices localA and localB have been partitioned in dimensions
 // 1 and 2 respectively. local matrix C has been partitioned completely
 
-// This partitioning enables to access MAX_SIZE elements in parallel in
+// This partitioning enables to access TILE_SIZE elements in parallel in
 // the local matrices. Because of the mode of access of array elements,
-// we are able to perform MAX_SIZE*MAX_SIZE operations in parallel.
+// we are able to perform TILE_SIZE*TILE_SIZE operations in parallel.
 
 // Note : i, j and k loops are interchanged.
 
 // The top loop systolic1 runs only for a_col iterations instead of
-// MAX_SIZE like the inner loops. The inner loops have fixed loop
+// TILE_SIZE like the inner loops. The inner loops have fixed loop
 // iteration counts to enable complete unroll
 
 // The following diagram explains how the matrix multiply happens
@@ -389,10 +358,10 @@ void krnl_mmult(const int* a, // Read-Only Matrix A
     for (int k = 0; k < a_col; k++) {
     #pragma HLS LOOP_TRIPCOUNT min = c_size max = c_size
     systolic2:
-        for (int i = 0; i < MAX_SIZE; i++) {
+        for (int i = 0; i < TILE_SIZE; i++) {
         #pragma HLS UNROLL
         systolic3:
-            for (int j = 0; j < MAX_SIZE; j++) {
+            for (int j = 0; j < TILE_SIZE; j++) {
             #pragma HLS UNROLL
                 // Get previous sum
                 int last = (k == 0) ? 0 : localC[i][j];
