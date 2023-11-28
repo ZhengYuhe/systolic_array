@@ -195,10 +195,13 @@ void krnl_mmult(const int* a, // Read-Only Matrix A
     for(int i0=0; i0<DATA_SIZE; i0+=TILE_SIZE){
         outer_j:
         for(int j0=0; j0<DATA_SIZE; j0+=TILE_SIZE){
-            readC:
+            fill_C:
             for(int i = i0; i < i0+TILE_SIZE; i++){
+                #pragma HLS UNROLL
                 for (int j = j0; j < j0+TILE_SIZE; j ++){
-                    localC[i-i0][j-j0] = c[i * DATA_SIZE + j];
+                    #pragma HLS UNROLL
+                    //localC[i-i0][j-j0] = c[i * DATA_SIZE + j];
+                    localC[i-i0][j-j0] = 0;
                 }
             }
 
