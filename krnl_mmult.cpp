@@ -151,13 +151,18 @@ Kernel Description :
 #include <stdio.h>
 
 #define DATA_SIZE 4096
-#define CHUNK_SIZE 16
-#define TILE_SIZE 4
-#define LAYERS 4
+#define CHUNK_SIZE_A 9
+#define CHUNK_SIZE_B 18
+#define TILE_SIZE 9
+#define LAYERS 1
 #define DIM_K (DATA_SIZE / LAYERS)
-#define TILES_IN_CHUNK (CHUNK_SIZE / TILE_SIZE) // CHUNK > TILE_SIZE
+#define TILES_IN_CHUNK_A (CHUNK_SIZE_A / TILE_SIZE) // CHUNK must be multiple of TILE_SIZE
+#define TILES_IN_CHUNK_B (CHUNK_SIZE_B / TILE_SIZE)
 
 
+#define OVERRUN_IDX_A (DATA_SIZE-CHUNK_SIZE_A)
+#define OVERRUN_IDX_B (DATA_SIZE-CHUNK_SIZE_B)
+#define MIN(a,b) (((a) < (b)) ? (a) : (b))
 
 extern "C" {
 void krnl_mmult(const int* a, // Read-Only Matrix A
@@ -167,20 +172,19 @@ void krnl_mmult(const int* a, // Read-Only Matrix A
 
     
     // Local memory to store input and output matrices
-    int localA[TILES_IN_CHUNK][LAYERS][TILE_SIZE][DIM_K];
+    int localA[TILES_IN_CHUNK_A][LAYERS][TILE_SIZE][DIM_K];
     #pragma HLS ARRAY_PARTITION variable = localA dim = 1 complete
     #pragma HLS ARRAY_PARTITION variable = localA dim = 2 complete
     #pragma HLS ARRAY_PARTITION variable = localA dim = 3 complete
     //#pragma HLS ARRAY_PARTITION variable=localA dim =2 factor=2 type=cyclic
     
-    int localB[TILES_IN_CHUNK][LAYERS][DIM_K][TILE_SIZE];
+    int localB[TILES_IN_CHUNK_B][LAYERS][DIM_K][TILE_SIZE];
     #pragma HLS ARRAY_PARTITION variable = localB dim = 1 complete
     #pragma HLS ARRAY_PARTITION variable = localB dim = 2 complete
     #pragma HLS ARRAY_PARTITION variable = localB dim = 4 complete
 
     int localC[TILE_SIZE][TILE_SIZE];
     #pragma HLS ARRAY_PARTITION variable = localC dim = 0 complete
-
 
     int bufC[LAYERS][TILE_SIZE][TILE_SIZE];
     #pragma HLS ARRAY_PARTITION variable = bufC dim = 0 complete
@@ -190,46 +194,52 @@ void krnl_mmult(const int* a, // Read-Only Matrix A
 
     int bufB[LAYERS][TILE_SIZE][TILE_SIZE];
     #pragma HLS ARRAY_PARTITION variable = bufB dim = 0 complete    
+    
+    int r1;
+    int c1;
 
     Loop_r0:
-    for (int r0 = 0; r0 < DATA_SIZE; r0 += CHUNK_SIZE){
+    for (int r0 = 0; r0 < DATA_SIZE; r0 += CHUNK_SIZE_A){
+
+        r1 = MIN(r0, OVERRUN_IDX_A);
         
         readA_chunk:
-        for (int t = 0; t < TILES_IN_CHUNK; t++){
+        for (int t = 0; t < TILES_IN_CHUNK_A; t++){
             readA_tile:
             for (int i = 0; i < TILE_SIZE; i ++){
                 readA_layer:
                 for (int l = 0; l < LAYERS; l ++){
                     readA_k:
                     for (int k = 0; k < DIM_K; k ++){
-                        localA[t][l][i][k] = a[(r0 + t * TILE_SIZE + i) * DATA_SIZE + l * DIM_K + k];
+                        localA[t][l][i][k] = a[(r1 + t * TILE_SIZE + i) * DATA_SIZE + l * DIM_K + k];
                     }
                 }
             }
         }
 
         Loop_c0:
-        for (int c0 = 0; c0 < DATA_SIZE; c0 += CHUNK_SIZE){
+        for (int c0 = 0; c0 < DATA_SIZE; c0 += CHUNK_SIZE_B){
             
-            // Burst read B
+            c1 = MIN(c0, OVERRUN_IDX_B);
+
             readB_chunk:
-            for (int t = 0; t < TILES_IN_CHUNK; t++){
+            for (int t = 0; t < TILES_IN_CHUNK_B; t++){
                 readB_tile:
                 for (int j = 0; j < TILE_SIZE; j ++){
                     readB_layer:
                     for (int l = 0; l < LAYERS; l ++){
                         readB_k:
                         for (int k = 0; k < DIM_K; k ++){
-                            localB[t][l][k][j] = b[(c0 + t * TILE_SIZE + j) * DATA_SIZE + l * DIM_K + k];
+                            localB[t][l][k][j] = b[(c1 + t * TILE_SIZE + j) * DATA_SIZE + l * DIM_K + k];
                         }
                     }
                 }
             }
 
             loop_tr:
-            for (int tr = 0; tr < TILES_IN_CHUNK; tr ++){
+            for (int tr = 0; tr < TILES_IN_CHUNK_A; tr ++){
                 loop_tc:
-                for (int tc = 0; tc < TILES_IN_CHUNK; tc ++ ){
+                for (int tc = 0; tc < TILES_IN_CHUNK_B; tc ++ ){
 
                     fill_PE:
                     for (int l = 0; l < LAYERS; l++){
@@ -292,12 +302,10 @@ void krnl_mmult(const int* a, // Read-Only Matrix A
                     for (int i = 0; i < TILE_SIZE; i ++ ){
                         writeC_inner:
                         for (int j = 0; j < TILE_SIZE; j ++){
-                            c[(r0 + tr * TILE_SIZE + i) * DATA_SIZE + c0 + tc * TILE_SIZE + j] = localC[i][j];
+                            c[(r1 + tr * TILE_SIZE + i) * DATA_SIZE + c1 + tc * TILE_SIZE + j] = localC[i][j];
                         }
                     }
 
-
-   
                 }
 
             }
